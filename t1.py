@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
 # author:Haochun Wang
-
+'''
+question:
+2017.07.01 delete? ok?
+time difference same time but feel like different
+'''
 import time
 import sys
 import csv
 from elasticsearch import Elasticsearch
-import matplotlib.pyplot as plt
+
+# import matplotlib.pyplot as plt
 
 reload(sys)
 sys.setdefaultencoding('utf8')
 # set up the connection with elasticsearch (this is based on the service)
 
 
-class Elas_test:
+class ElasTest:
     def __init__(self):
         self.es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
 
@@ -31,17 +36,18 @@ class Elas_test:
         return
 
     def read_write(self, flist, read_size=100):
-        start_read = time.clock()
+        start_read = time.time()
+
         filterlst = []
         for k in flist:
             filterlst.append('hits.hits._source.' + k)
         res = self.es.search(index="nprobe-2017.07.01", size=read_size, filter_path=filterlst, request_timeout=30)
-        end_read = time.clock()
+        end_read = time.time()
         print "For %d and " % read_size, " %d columns" % len(flist), '\t\t', \
             "Read of %0.6f seconds" % (end_read - start_read)
 
-        start_write = time.clock()
-        with open('some%d.csv' % read_size, 'wb') as f:
+        start_write = time.time()
+        with open('a/some%d_%d.csv' % (read_size, len(flist)), 'wb') as f:
             writer = csv.writer(f)
             writer.writerow(flist)
             # print len(res['hits']['hits'])
@@ -51,9 +57,49 @@ class Elas_test:
                     tp.append(l['_source'][j])
                 # print tp
                 writer.writerow(tp)
-        end_write = time.clock()
+        end_write = time.time()
+
         print "For %d and " % read_size, " %d columns" % len(flist), '\t\t', \
             "Write of %0.6f seconds" % (end_write - start_write)
+        return
+
+    def r_w_pieces(self, flist, read_size=0, block=1000):
+        start = time.time()
+        if read_size == 0:  # get the length of index
+            read_size = self.count()
+
+        filterlst = []  # build the filter_path
+        for k in flist:
+            filterlst.append('hits.hits._source.' + k)
+
+        l_times = 0
+        if read_size % block == 0:
+            l_times = read_size / block
+        elif read_size % block > 0:
+            l_times = read_size / block + 1
+        # print l_times
+        flag = 0
+        with open('a/res_%d_%d_%d.csv' % (len(flist), block, read_size), 'a+') as f:
+            writer = csv.writer(f)
+            writer.writerow(flist)
+        for i in xrange(0, l_times):
+
+            res = self.es.search(index="nprobe-2017.07.01", size=block, filter_path=filterlst, request_timeout=30,
+                                 body={"query": {"match_all": {}}, "from": flag, "size": block})
+            # print res
+            # body={"query": { "match_all": {} },"from": 10,"size": 10}
+            with open('a/res_%d_%d_%d.csv' % (len(flist), block, read_size), 'a+') as f:
+                writer = csv.writer(f)
+                for l in res['hits']['hits']:
+                    tp = []
+                    for j in flist:
+                        tp.append(l['_source'][j])
+                    writer.writerow(tp)
+            flag += block
+
+        end = time.time()
+        print "For %d and " % read_size, "%d columns" % len(flist), "%d as a block" % block, '\t\t', \
+            "Reading & Writing of %0.6f seconds" % (end - start)
         return
 
     def draw_line_chart(self):
@@ -93,8 +139,15 @@ if __name__ == "__main__":
                 u'PROTOCOL_MAP', u'PROTOCOL', u'OUT_BYTES', u'L4_SRC_PORT', u'IN_PKTS', u'IN_BYTES', u'SRC_TOS',
                 u'APPLICATION_ID', u'FLOW_PROTO_PORT', u'IPV4_SRC_ADDR', u'OUT_PKTS', u'UNTUNNELED_PROTOCOL',
                 u'DOWNSTREAM_SESSION_ID', u'@version', u'L7_PROTO_NAME']
-    es = Elas_test()
-    es.draw_line_chart()
+    es = ElasTest()
+    # es.r_w_pieces(col_list[:2], read_size=100000, block=10000)
+    for k in [1000000, 5000000, 10000000]:
+        for i in [1000, 10000, 100000]:
+            for j in [1, 2, 5, 10, 15]:
+                tp_list = col_list[:j]
+                es.r_w_pieces(tp_list, read_size=k, block=i)
+
+    # es.draw_line_chart()
     # es.read_write(flist=['IN_BYTES', '@timestamp'], read_size=10)
     ###################################################################################################################
     ###################################################################################################################
@@ -102,7 +155,6 @@ if __name__ == "__main__":
     # This block is to test reading and writing time for different scales of rows and columns.
     for i in [1, 10, 100, 1000, 10000, 100000, 1000000]:
         for j in xrange(1, len(col_list) + 1):
-
             tp_list = col_list[:j]
             es.read_write(flist=tp_list, read_size=i)
     '''

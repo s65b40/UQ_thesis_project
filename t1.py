@@ -141,12 +141,19 @@ if __name__ == "__main__":
                 u'DOWNSTREAM_SESSION_ID', u'@version', u'L7_PROTO_NAME']
     es = ElasTest()
     # es.r_w_pieces(col_list[:2], read_size=100000, block=10000)
-    for k in [1000000, 5000000, 10000000]:
-        for i in [1000, 10000, 100000]:
+    for i in [100000, 250000, 500000, 600000, 7000
+              00, 800000, 900000, 1000000]:
+        for j in [1, 2, 5, 10, 15]:
+            tp_list = col_list[:j]
+            es.r_w_pieces(tp_list, read_size=0, block=i)
+    '''
+    # This block is to test reading and writing time for different scale of pieces
+    for k in [5000000, 10000000]:
+        for i in [100000, 500000]:
             for j in [1, 2, 5, 10, 15]:
                 tp_list = col_list[:j]
                 es.r_w_pieces(tp_list, read_size=k, block=i)
-
+    '''
     # es.draw_line_chart()
     # es.read_write(flist=['IN_BYTES', '@timestamp'], read_size=10)
     ###################################################################################################################

@@ -79,6 +79,11 @@ class ElasTest:
             l_times = read_size / block + 1
         # print l_times
         flag = 0
+        for i in xrange(0, l_times):
+            res = self.es.search(index="nprobe-2017.07.01", size=block, filter_path=filterlst, request_timeout=30,
+                                 body={"query": {"match_all": {}}, "from": flag, "size": block})
+            flag += block
+        '''
         with open('a/res_%d_%d_%d.csv' % (len(flist), block, read_size), 'a+') as f:
             writer = csv.writer(f)
             writer.writerow(flist)
@@ -96,7 +101,7 @@ class ElasTest:
                         tp.append(l['_source'][j])
                     writer.writerow(tp)
             flag += block
-
+        '''
         end = time.time()
         print "For %d and " % read_size, "%d columns" % len(flist), "%d as a block" % block, '\t\t', \
             "Reading & Writing of %0.6f seconds" % (end - start)
@@ -140,12 +145,14 @@ if __name__ == "__main__":
                 u'APPLICATION_ID', u'FLOW_PROTO_PORT', u'IPV4_SRC_ADDR', u'OUT_PKTS', u'UNTUNNELED_PROTOCOL',
                 u'DOWNSTREAM_SESSION_ID', u'@version', u'L7_PROTO_NAME']
     es = ElasTest()
+    es.r_w_pieces(col_list[:2], read_size=0, block=500000)
     # es.r_w_pieces(col_list[:2], read_size=100000, block=10000)
-    for i in [100000, 250000, 500000, 600000, 7000
-              00, 800000, 900000, 1000000]:
+    '''
+    for i in [100000, 250000, 500000, 600000, 700000, 800000, 900000, 1000000]:
         for j in [1, 2, 5, 10, 15]:
             tp_list = col_list[:j]
             es.r_w_pieces(tp_list, read_size=0, block=i)
+    '''
     '''
     # This block is to test reading and writing time for different scale of pieces
     for k in [5000000, 10000000]:

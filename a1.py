@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 # author:Haochun Wang
 
-import time
-import sys
 import csv
-from elasticsearch import Elasticsearch
+import sys
+import time
 
-# // core number  memory  writng to na index     loop memory
+from elasticsearch import Elasticsearch
+from elasticsearch import helpers
+
+# /   604 bilk write
+# # meaning graaphs max speed reading
+# xavg bandwidth example bits/sec
 # import matplotlib.pyplot as plt
 
 reload(sys)
@@ -35,11 +39,14 @@ class ElasTest:
         # print res
         return
 
-    def count(self):
+    def count(self, index_name):
         # Get the number of the index
-        num_info = self.es.count(index="nprobe-2017.07.01")
+        num_info = self.es.count(index=index_name)
         num_index = num_info[u'count']
         return num_index
+
+    def create_index(self, indexname):
+        self.es.indices.create(index=indexname, ignore=400)
 
     def delete_index(self, indexname):
         self.es.indices.delete(index=indexname, ignore=[400, 404])
@@ -53,7 +60,7 @@ class ElasTest:
         '''
         # param: 1. index name; 2. reading size;; 3. filter list; 4. timeout
         res = self.es.search(index="nprobe-2017.07.01", size=read_size, filter_path=flist, request_timeout=60)
-
+        print res
         return
 
     def read_write(self, flist, read_size=100):
@@ -194,7 +201,7 @@ class ElasTest:
             flag += block
 
         end = time.time()
-        with open('time/r_pieces_%d_%d_%d.csv' % (read_size, len(flist), block), 'a+') as f:
+        with open('time_one_core/r_pieces_%d_%d_%d.csv' % (read_size, len(flist), block), 'a+') as f:
             writer = csv.writer(f)
             line_out = [read_size, len(flist), "%0.6f" % (end - start), block]
             writer.writerow(line_out)
@@ -212,7 +219,7 @@ class ElasTest:
             :param w_times:     Times of writing loop
             :return:            Null
         '''
-
+        # es.r_w_index(col_list, read_size=10, w_times=1)
         # read
         r_start = time.time()
 
@@ -232,25 +239,132 @@ class ElasTest:
 
         w_start = time.time()
 
-        self.es.indices.create(index='writeback-index', ignore=400)
+        _source = []
+        for i in range(read_size):
+            # _id = res[u'hits'][u'hits'][i][u'_id']
+            _source.append(res[u'hits'][u'hits'][i][u'_source'])
+
         for j in range(w_times):
             for i in range(read_size):
-                # _id = res[u'hits'][u'hits'][i][u'_id']
-                _source = res[u'hits'][u'hits'][i][u'_source']
-                self.es.index(index="writeback-index", doc_type="flows", id=w_flag, body=_source)
+                self.es.index(index="writeback-index", doc_type="flows", id=w_flag, body=_source[i])
                 w_flag += 1
-        res2 = self.es.search(index="writeback-index", size=read_size)
-        print res2
-        num = self.es.count('writeback-index')[u'count']
-        print num
         w_finish = time.time()
         w_time = w_finish - w_start
-
+        print w_flag
+        num = self.es.count('writeback-index')[u'count']
+        print num
         with open('w_index/r_w.csv', 'a+') as f:
             writer = csv.writer(f)
             line_out = [read_size, len(flist), "%0.6f" % r_time, "%0.6f" % w_time, w_times]
             writer.writerow(line_out)
         # '''
+        return
+
+    def r_w_index_bulk(self, flist, read_size, w_times):
+        '''
+            Reading and writing with bulk test for elasticsearch index for industrial usage.
+            Read a certain size of a block into memory and write the block back to a new elasticsearch with bulk api
+            index in a loop.
+            ######################################################################################
+            Output file format: 1. Reading size 2. The numbers of columns 3. Reading time
+                                4. Writing times 5. Writing time
+            :param flist:       The chosen fields list from the index
+            :param read_size:   The number of items in the index that will be read
+            :param w_times:     Times of writing loop
+            :return:            Null
+        '''
+
+        # read
+        r_start = time.time()
+
+        # read into memory
+        res = self.es.search(index="nprobe-2017.07.01", size=read_size)
+
+        r_finish = time.time()
+
+        r_time = r_finish - r_start
+
+        # write
+
+        data_list = []
+
+        for i in range(read_size):
+            data_list.append({"_index": "writeback-index", "_type": "flows"
+                                 , "_source": res[u'hits'][u'hits'][i][u'_source']})
+
+        w_start = time.time()
+
+        for j in range(w_times):
+            helpers.bulk(self.es, data_list, "writeback-index", raise_on_error=True)
+
+        w_finish = time.time()
+
+        w_time = w_finish - w_start
+
+        num = self.es.count('writeback-index')[u'count']
+        print num
+        with open('w_index/r_w_bulk.csv', 'a+') as f:
+            writer = csv.writer(f)
+            line_out = [read_size, len(flist), "%0.6f" % r_time, "%0.6f" % w_time, w_times]
+            writer.writerow(line_out)
+
+        return
+
+    def r_w_index_bulk_bandwidth(self, flist, read_size):
+        '''
+            Reading and writing with bulk test for elasticsearch index for industrial usage.
+            Read a certain size of a block into memory and calculate the average bandwidth per second
+            to a new elasticsearch index with bulk api.
+
+            ######################################################################################
+            Output file format: 1. Reading size 2. The numbers of columns 3. Reading time
+                                4. Writing times 5. Writing time
+            :param flist:       The chosen fields list from the index
+            :param read_size:   The number of items in the index that will be read
+            :return:            Null
+        '''
+
+        # read
+        t_i_o_dic = {}  # {'time':[in_bytes, out_bytes, bytes]}
+        # read into memory
+        filterlst = []  # storage the filter list
+        for k in flist:
+            filterlst.append('hits.hits._source.' + k)
+        res = self.es.search(index="nprobe-2017.07.01", filter_path=filterlst, size=read_size)
+        # print res[u'hits'][u'hits'][2][u'_source']
+        # print 'res', res
+        for i in res[u'hits'][u'hits']:
+            tmp_source = i[u'_source']
+            timestamp = tmp_source[u'@timestamp']
+            hour_min = timestamp[11:16]
+            if t_i_o_dic.has_key(hour_min):
+                t_i_o_dic[hour_min][0] += tmp_source[u'IN_BYTES']
+                t_i_o_dic[hour_min][1] += tmp_source[u'OUT_BYTES']
+            else:
+                t_i_o_dic[hour_min] = [tmp_source[u'IN_BYTES'], tmp_source[u'OUT_BYTES']]
+
+        # {u'IN_BYTES': 2090, u'@timestamp': u'2017-07-01T09:20:03.155Z', u'OUT_BYTES': 0}}
+
+        # write
+
+        data_list = []
+
+        for i in t_i_o_dic:
+            data_list.append(
+                {"_index": "bandwidth",
+                 "_type": "flows",
+                 "_source": {u'hour_min': i,
+                             u'IN_BYTES': t_i_o_dic[i][0],
+                             u'OUT_BYTES': t_i_o_dic[i][1],
+                             u'BYTES': t_i_o_dic[i][0] + t_i_o_dic[i][1]
+                             }
+                 })
+        # print len(data_list)
+        print len(data_list)
+        helpers.bulk(self.es, data_list, "bandwidth", raise_on_error=True)
+
+        num = self.es.count('bandwidth')[u'count']
+        print num
         return
 
     def draw_line_chart(self):
@@ -293,11 +407,17 @@ if __name__ == "__main__":
                 u'APPLICATION_ID', u'FLOW_PROTO_PORT', u'IPV4_SRC_ADDR', u'OUT_PKTS', u'UNTUNNELED_PROTOCOL',
                 u'DOWNSTREAM_SESSION_ID', u'@version', u'L7_PROTO_NAME']
 
-    es = ElasTest()
-    es.delete_index('writeback-index')
-    es.r_w_index(col_list, read_size=10, w_times=2)
-    # print es.count()
-    # es.read_write(flist=['IN_BYTES', '@timestamp'], read_size=10)
+    # es = ElasTest()
+    # print es.count('bandwidth')
+    # es.delete_index('bandwidth')
+    # es.create_index('bandwidth')
+    es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
+    res = es.search(index="bandwidth")
+    print res
+    # es.r_w_index_bulk_bandwidth(flist=['IN_BYTES', 'OUT_BYTES', '@timestamp'], read_size=100000)
+    # es.delete_index('writeback-index')
+
+    #es.read_write(flist=['IN_BYTES', '@timestamp'], read_size=100)
     # es.r_w_pieces(flist=['IN_BYTES', '@timestamp'], read_size=1000, block=10)
     # es.r_w_pieces(col_list[:2], read_size=0, block=500000)
     # es = ElasTest()
@@ -319,12 +439,11 @@ if __name__ == "__main__":
     ###################################################################################################################
     # This block is to test reading and writing time for different scale of pieces
     '''
-    for y in xrange(3):
-        for k in [11804900]:
-            for i in [230000, 240000, 250000, 260000]:
-                for j in [1, 2, 5, 10, 20, 29]:
-                    tp_list = col_list[:j]
-                    es.r_pieces(tp_list, read_size=k, block=i)
+    for k in [11804900]:
+        for i in [230000, 240000, 250000, 260000]:
+            for j in [1, 10, 29]:
+                tp_list = col_list[:j]
+                es.r_pieces(tp_list, read_size=k, block=i)
     '''
     '''
     for x in xrange(3):

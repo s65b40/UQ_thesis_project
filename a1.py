@@ -4,6 +4,7 @@
 import csv
 import sys
 import time
+import random
 
 from elasticsearch import Elasticsearch
 from elasticsearch import helpers
@@ -12,17 +13,22 @@ from elasticsearch import helpers
 # # meaning graaphs max speed reading
 # xavg bandwidth example bits/sec
 # import matplotlib.pyplot as plt
+# kibana
+# symmetric
+# timstamp first switch last s
+# histogram
 
 reload(sys)
 sys.setdefaultencoding('utf8')
 
 
-# set up the connection with elasticsearch (this is based on the service)
+# set up the connection with elasticsearch (based on the service)
 
 
 class ElasTest:
     def __init__(self):
-        # Start an Elasticsearch service. Default local server, and default port
+        # Start an Elasticsearch service.
+        # Default local server: localhost or 127.0.0.1, and default port:9200
         self.es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
 
     def te(self):
@@ -45,11 +51,11 @@ class ElasTest:
         num_index = num_info[u'count']
         return num_index
 
-    def create_index(self, indexname):
-        self.es.indices.create(index=indexname, ignore=400)
+    def create_index(self, index_name):
+        self.es.indices.create(index=index_name, ignore=400)
 
-    def delete_index(self, indexname):
-        self.es.indices.delete(index=indexname, ignore=[400, 404])
+    def delete_index(self, index_name):
+        self.es.indices.delete(index=index_name, ignore=[400, 404])
 
     def read_test(self, flist, read_size=100):
         '''
@@ -59,7 +65,10 @@ class ElasTest:
             :return:            Null
         '''
         # param: 1. index name; 2. reading size;; 3. filter list; 4. timeout
-        res = self.es.search(index="nprobe-2017.07.01", size=read_size, filter_path=flist, request_timeout=60)
+        filterlst = []
+        for k in flist:
+            filterlst.append('hits.hits._source.' + k)
+        res = self.es.search(index="nprobe-2017.07.01", size=read_size, filter_path=filterlst, request_timeout=60)
         print res
         return
 
@@ -201,7 +210,7 @@ class ElasTest:
             flag += block
 
         end = time.time()
-        with open('time_one_core/r_pieces_%d_%d_%d.csv' % (read_size, len(flist), block), 'a+') as f:
+        with open('time_three_core/r_pieces_%d_%d_%d.csv' % (read_size, len(flist), block), 'a+') as f:
             writer = csv.writer(f)
             line_out = [read_size, len(flist), "%0.6f" % (end - start), block]
             writer.writerow(line_out)
@@ -338,10 +347,10 @@ class ElasTest:
             timestamp = tmp_source[u'@timestamp']
             hour_min = timestamp[11:16]
             if t_i_o_dic.has_key(hour_min):
-                t_i_o_dic[hour_min][0] += tmp_source[u'IN_BYTES']
-                t_i_o_dic[hour_min][1] += tmp_source[u'OUT_BYTES']
+                t_i_o_dic[hour_min][0] += tmp_source[u'IN_BYTES'] * 8
+                t_i_o_dic[hour_min][1] += tmp_source[u'OUT_BYTES'] * 8
             else:
-                t_i_o_dic[hour_min] = [tmp_source[u'IN_BYTES'], tmp_source[u'OUT_BYTES']]
+                t_i_o_dic[hour_min] = [tmp_source[u'IN_BYTES'] * 8, tmp_source[u'OUT_BYTES'] * 8]
 
         # {u'IN_BYTES': 2090, u'@timestamp': u'2017-07-01T09:20:03.155Z', u'OUT_BYTES': 0}}
 
@@ -354,9 +363,9 @@ class ElasTest:
                 {"_index": "bandwidth",
                  "_type": "flows",
                  "_source": {u'hour_min': i,
-                             u'IN_BYTES': t_i_o_dic[i][0],
-                             u'OUT_BYTES': t_i_o_dic[i][1],
-                             u'BYTES': t_i_o_dic[i][0] + t_i_o_dic[i][1]
+                             u'IN_BIT_BD': t_i_o_dic[i][0],
+                             u'OUT_BIT_BD': t_i_o_dic[i][1],
+                             u'BIT_BD': t_i_o_dic[i][0] + t_i_o_dic[i][1]
                              }
                  })
         # print len(data_list)
@@ -365,6 +374,117 @@ class ElasTest:
 
         num = self.es.count('bandwidth')[u'count']
         print num
+        return
+
+    # {u'hits': {u'hits': [{u'_source': {u'L7_PROTO': 91, u'ENGINE_ID': 1, u'@timestamp': u'2017-07-01T09:20:03.155Z'
+    # , u'IPV4_DST_ADDR': u'223.29.241.82', u'UPSTREAM_TUNNEL_ID': 0, u'NPROBE_IPV4_ADDRESS': u'10.140.64.70'
+    # , u'L4_DST_PORT': 63787, u'UNTUNNELED_IPV4_SRC_ADDR': u'40.100.144.242', u'DOWNSTREAM_TUNNEL_ID': 0
+    # , u'FIRST_SWITCHED': 1498900803, u'LAST_SWITCHED': 1498900911, u'UPSTREAM_SESSION_ID': 0, u'SRC_VLAN': 52
+    # , u'FLOW_ID': 92042368, u'PROTOCOL_MAP': u'tcp', u'PROTOCOL': 6, u'OUT_BYTES': 0, u'L4_SRC_PORT': 443
+    # , u'IN_PKTS': 11, u'IN_BYTES': 2090, u'SRC_TOS': 0, u'APPLICATION_ID': u'0', u'FLOW_PROTO_PORT': 443
+    # , u'IPV4_SRC_ADDR': u'40.100.144.242', u'OUT_PKTS': 0, u'UNTUNNELED_PROTOCOL': 6, u'DOWNSTREAM_SESSION_ID': 0
+    # , u'@version': u'1', u'L7_PROTO_NAME': u'SSL'}}]}}
+
+    def symmetry(self):
+        '''
+        The symmetry is defined as follow
+        symmetry = in_packets/out_packets
+        :param index_name:
+        :return:
+        '''
+        l_times = 11804900 / 200000 + 1  # count the number of loop
+
+        flag = 0
+        symmax = 0
+        symmin = 10000
+        count = 0
+        # symmax 104.0  symmin 0.027027027027
+        # sym_dic = {'0': 0, 'in0': 0, '(0,0.5)': 0, '[0.5,0.6)': 0, '[0.6,0.7)': 0, '[0.7,0.8)': 0, '[0.8,0.9)': 0,
+        #           '[0.9,1)': 0, '[1, 1.1)': 0, '[1.1, 1.2)': 0,'[1.2, 1.3)': 0, '[1.3, 1.6)': 0, '[1.6, 2)': 0
+        #        , '[2, 3)': 0, '[3, 4)': 0, '[4, 10)': 0, '[10, 105)': 0}
+        # sym_dic = {'[1,1.01)': 0, '[1.01,1.02)': 0, '[1.02,1.03)': 0, '[1.03,1.04)': 0, '[1.04,1.05)': 0, '[1.05,1.06)': 0, '[1.06,1.07)': 0, '[1.07,1.08)': 0, '[1.08,1.09)': 0, '[1.09,1.1)': 0}
+        count_0 = 0
+        with open('out_pkts_random10000.txt', 'a+') as tf:
+            for i in xrange(0, l_times):
+                res = self.es.search(index="nprobe-2017.07.01", request_timeout=60,
+                                     body={"query": {"match_all": {}}, "from": flag, "size": 200000})
+                for j in res[u'hits'][u'hits']:
+                    count += 1
+                    tmp_source = j[u'_source']
+                    out_packets = tmp_source[u'OUT_PKTS']
+                    in_packets = tmp_source[u'IN_PKTS']
+                    if out_packets == 0:
+                        random_num = random.random()
+                        if random_num < 0.01:
+                            count_0 += 1
+                            tf.writelines(str(tmp_source) + '\n')
+                            if count_0 == 10000:
+                                exit(0)
+                            continue
+                    '''
+                    else:
+                        sym = (in_packets + 0.0) / out_packets
+                        
+                        if 0 < sym < 0.5:
+                            sym_dic['(0,0.5)'] += 1
+                        elif sym == 0:
+                            sym_dic['in0'] += 1
+                        elif 0.5 <= sym < 0.6:
+                            sym_dic['[0.5,0.6)'] += 1
+                        elif 0.6 <= sym < 0.7:
+                            sym_dic['[0.6,0.7)'] += 1
+                        elif 0.7 <= sym < 0.8:
+                            sym_dic['[0.7,0.8)'] += 1
+                        elif 0.8 <= sym < 0.9:
+                            sym_dic['[0.8,0.9)'] += 1
+                        elif 0.9 <= sym < 1:
+                            sym_dic['[0.9,1)'] += 1
+                        
+                        if 1 <= sym < 1.01:
+                            sym_dic['[1,1.01)'] += 1
+                        elif 1.01 <= sym < 1.02:
+                            sym_dic['[1.01,1.02)'] += 1
+                        elif 1.02 <= sym < 1.03:
+                            sym_dic['[1.02,1.03)'] += 1
+                        elif 1.03 <= sym < 1.04:
+                            sym_dic['[1.03,1.04)'] += 1
+                        elif 1.04 <= sym < 1.05:
+                            sym_dic['[1.04,1.05)'] += 1
+                        elif 1.05 <= sym < 1.06:
+                            sym_dic['[1.05,1.06)'] += 1
+                        elif 1.06 <= sym < 1.07:
+                            sym_dic['[1.06,1.07)'] += 1
+                        elif 1.07 <= sym < 1.08:
+                            sym_dic['[1.07,1.08)'] += 1
+                        elif 1.08 <= sym < 1.09:
+                            sym_dic['[1.08,1.09)'] += 1
+                        elif 1.09 <= sym < 1.1:
+                            sym_dic['[1.09,1.1)'] += 1
+                        
+                        elif 1.1 <= sym < 1.2:
+                            sym_dic['[1.1, 1.2)'] += 1
+                        elif 1.2 <= sym < 1.3:
+                            sym_dic['[1.2, 1.3)'] += 1
+                        elif 1.3 <= sym < 1.6:
+                            sym_dic['[1.3, 1.6)'] += 1
+                        elif 1.6 <= sym < 2:
+                            sym_dic['[1.6, 2)'] += 1
+                        elif 2 <= sym < 3:
+                            sym_dic['[2, 3)'] += 1
+                        elif 3 <= sym < 4:
+                            sym_dic['[3, 4)'] += 1
+                        elif 4 <= sym < 10:
+                            sym_dic['[4, 10)'] += 1
+                        else:
+                            sym_dic['[10, 105)'] += 1
+                    '''
+
+                # {'[4, 10)': 4680, '(0,0.5)': 26608, '[10, 105)': 742, '0': 3278571, '[0.5,1)': 660187, '[1, 2)': 6889607, '[2, 4)': 944544}
+
+            flag += 200000
+
+        # print sym_dic
+        # print 'count', count
         return
 
     def draw_line_chart(self):
@@ -407,13 +527,14 @@ if __name__ == "__main__":
                 u'APPLICATION_ID', u'FLOW_PROTO_PORT', u'IPV4_SRC_ADDR', u'OUT_PKTS', u'UNTUNNELED_PROTOCOL',
                 u'DOWNSTREAM_SESSION_ID', u'@version', u'L7_PROTO_NAME']
 
-    # es = ElasTest()
+    es = ElasTest()
+    es.symmetry()
     # print es.count('bandwidth')
     # es.delete_index('bandwidth')
     # es.create_index('bandwidth')
-    es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
-    res = es.search(index="bandwidth")
-    print res
+    # es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
+    # res = es.search(index="bandwidth")
+    #print res
     # es.r_w_index_bulk_bandwidth(flist=['IN_BYTES', 'OUT_BYTES', '@timestamp'], read_size=100000)
     # es.delete_index('writeback-index')
 
@@ -436,14 +557,12 @@ if __name__ == "__main__":
 
 
 
-    ###################################################################################################################
+    #############################250000######################################################################################
     # This block is to test reading and writing time for different scale of pieces
     '''
-    for k in [11804900]:
-        for i in [230000, 240000, 250000, 260000]:
-            for j in [1, 10, 29]:
-                tp_list = col_list[:j]
-                es.r_pieces(tp_list, read_size=k, block=i)
+    for j in [1, 10, 29]:
+        tp_list = col_list[:j]
+        es.r_pieces(tp_list, read_size=11804900, block=250000)
     '''
     '''
     for x in xrange(3):

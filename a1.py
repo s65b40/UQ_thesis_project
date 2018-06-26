@@ -5,14 +5,14 @@ import csv
 import sys
 import time
 import random
-
+from numpy import *
 from elasticsearch import Elasticsearch
 from elasticsearch import helpers
-
+import matplotlib.pyplot as plt
 # /   604 bilk write
 # # meaning graaphs max speed reading
 # xavg bandwidth example bits/sec
-# import matplotlib.pyplot as plt
+
 # kibana
 # symmetric
 # timstamp first switch last s
@@ -479,7 +479,7 @@ class ElasTest:
                             sym_dic['[10, 105)'] += 1
                     '''
 
-                # {'[4, 10)': 4680, '(0,0.5)': 26608, '[10, 105)': 742, '0': 3278571, '[0.5,1)': 660187, '[1, 2)': 6889607, '[2, 4)': 944544}
+                    # {'[4, 10)': 4680, '(0,0.5)': 26608, '[10, 105)': 742, '0': 3278571, '[0.5,1)': 660187, '[1, 2)': 6889607, '[2, 4)': 944544}
 
             flag += 200000
 
@@ -487,39 +487,96 @@ class ElasTest:
         # print 'count', count
         return
 
-    def draw_line_chart(self):
-        # draw the results in a graph, needing modified
-        read_x = range(1, 30)
-        write_x = range(1, 30)
-        read_y = []
-        write_y = []
-        i = 0
-        with open('u', 'rb') as f:
-            lines = f.readlines()
-            print len(lines)
-            for line in lines:
-                print line
-                res = line.split(", ")
-                # print type(int(res[0].split(" ")[1]))
-                if int(res[0].split(" ")[1]) == 100000:
-                    if i % 2 == 0:
-                        read_y.append(float(res[2].split(" ")[2]))
-                        i += 1
+    def symmetry2(self, block, size):
+        l_times = size / block + 1
+        # l_times = 11804900 / block + 1  # count the number of loop
+        flag = 0
+        # symmax 104.0  symmin 0.027027027027
+        x = []
+        y = []
+        for i in xrange(0, l_times):
+            res = self.es.search(index="nprobe-2017.07.01", request_timeout=60,
+                                 body={"query": {"match_all": {}}, "from": flag, "size": block})
+            for j in res[u'hits'][u'hits']:
+                tmp_source = j[u'_source']
+                out_packets = tmp_source[u'OUT_PKTS']
+                in_packets = tmp_source[u'IN_PKTS']
+                flow_size = out_packets + in_packets
+                sym = 0
+                if out_packets == 0:
+                    pass
+                    # sym = (in_packets + 0.0) / (out_packets + 1)
+                else:
+                    sym = (in_packets + 0.0) / out_packets
+                    if sym > 3:
+                        pass
                     else:
-                        write_y.append(float(res[2].split(" ")[2]))
-                        i += 1
-        plt.plot(read_x, read_y, label='Reading time', linewidth=3, color='r', markerfacecolor='blue', markersize=12)
-        plt.plot(write_x, write_y, label='Writing time')
-        plt.xlabel('Columns')
-        plt.ylabel('Time(seconds)')
-        plt.title('R/W time test for 100000')
-        plt.legend()
+                        x.append(flow_size)
+                        y.append(sym)
+
+            flag += block
+        self.draw_line_chart(x, y)
+        return
+
+    def symmetry_kibana(self, block, size):
+        l_times = size / block + 1
+        # l_times = 11804900 / block + 1  # count the number of loop
+        flag = 0
+        # symmax 104.0  symmin 0.027027027027
+        y = []
+        data_list = []
+        for i in xrange(0, l_times):
+            res = self.es.search(index="nprobe-2017.07.01", request_timeout=60,
+                                 body={"query": {"match_all": {}}, "from": flag, "size": block})
+            for j in res[u'hits'][u'hits']:
+                tmp_source = j[u'_source']
+                out_packets = tmp_source[u'OUT_PKTS']
+                in_packets = tmp_source[u'IN_PKTS']
+                sym = 0
+                if out_packets == 0:
+                    pass
+                    # sym = (in_packets + 0.0) / (out_packets + 1)
+                else:
+                    sym = (in_packets + 0.0) / out_packets
+                    if sym > 3 or sym < 0.8:
+                        tmp_source[u'symmetry'] = sym
+                        data_list.append(
+                            {"_index": "symmetry_abnormal",
+                             "_type": "flows",
+                             "_source": tmp_source
+                             })
+                    else:
+                        pass
+            flag += block
+        print len(data_list)
+        helpers.bulk(self.es, data_list, "symmetry_abnormal", raise_on_error=True)
+
+        return
+
+    # poster
+    # write back results two thres 1% kibana symmetry
+    # new histogram flow size(in+out)-s(in/out+1)
+    # seminar graph kibana
+
+    def draw_line_chart(self, x, y):
+        # x = random.rand(50, 30)
+        # basic
+        # f1 = plt.figure(1)
+
+        plt.scatter(x, y, s=0.5)
+        plt.savefig("fig_11804900_200000_reduced_3.png")
         plt.show()
+        # with label
+        '''
+        plt.subplot(212)
+        label = list(ones(20)) + list(2 * ones(15)) + list(3 * ones(15))
+        label = array(label)
+        plt.scatter(x[:, 1], x[:, 0], 15.0 * label, 15.0 * label)
+        '''
         return
 
 
 if __name__ == "__main__":
-
     col_list = [u'L7_PROTO', u'ENGINE_ID', u'@timestamp', u'IPV4_DST_ADDR', u'UPSTREAM_TUNNEL_ID',
                 u'NPROBE_IPV4_ADDRESS', u'L4_DST_PORT', u'UNTUNNELED_IPV4_SRC_ADDR', u'DOWNSTREAM_TUNNEL_ID',
                 u'FIRST_SWITCHED', u'LAST_SWITCHED', u'UPSTREAM_SESSION_ID', u'SRC_VLAN', u'FLOW_ID',
@@ -528,81 +585,85 @@ if __name__ == "__main__":
                 u'DOWNSTREAM_SESSION_ID', u'@version', u'L7_PROTO_NAME']
 
     es = ElasTest()
-    es.symmetry()
-    # print es.count('bandwidth')
-    # es.delete_index('bandwidth')
-    # es.create_index('bandwidth')
-    # es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
-    # res = es.search(index="bandwidth")
-    #print res
-    # es.r_w_index_bulk_bandwidth(flist=['IN_BYTES', 'OUT_BYTES', '@timestamp'], read_size=100000)
-    # es.delete_index('writeback-index')
+    es.symmetry_kibana(block=200000, size=11804900)
+    # es.symmetry2(block=200000)
+# print es.count('bandwidth')
+# es.delete_index('bandwidth')
+#    es.create_index('symmetry_abnormal')
+# es = Elasticsearch([{'host': 'localhost', 'port': 9200}])
+# res = es.search(index="bandwidth")
+# print res
+# es.r_w_index_bulk_bandwidth(flist=['IN_BYTES', 'OUT_BYTES', '@timestamp'], read_size=100000)
+# es.delete_index('writeback-index')
 
-    #es.read_write(flist=['IN_BYTES', '@timestamp'], read_size=100)
-    # es.r_w_pieces(flist=['IN_BYTES', '@timestamp'], read_size=1000, block=10)
-    # es.r_w_pieces(col_list[:2], read_size=0, block=500000)
-    # es = ElasTest()
-    # es.te()
-    # es.r_w_pieces(col_list[:2], read_size=100000, block=10000)
-    '''
-    for i in [100000, 250000, 500000, 600000, 700000, 800000, 900000, 1000000]:
-        for j in [1, 2, 5, 10, 15]:
-            tp_list = col_list[:j]
-            es.r_w_pieces(tp_list, read_size=0, block=i)
-    '''
-    ###################################################################################################################
-    ###################################################################################################################
-
-    # This block is to test reading and writing time for different scales of rows and columns.
+# es.read_write(flist=['IN_BYTES', '@timestamp'], read_size=100)
+# es.r_w_pieces(flist=['IN_BYTES', '@timestamp'], read_size=1000, block=10)
+# es.r_w_pieces(col_list[:2], read_size=0, block=500000)
+# es = ElasTest()
+# es.te()
+# es.r_w_pieces(col_list[:2], read_size=100000, block=10000)
+'''
 
 
-
-    #############################250000######################################################################################
-    # This block is to test reading and writing time for different scale of pieces
-    '''
-    for j in [1, 10, 29]:
+for i in [100000, 250000, 500000, 600000, 700000, 800000, 900000, 1000000]:
+    for j in [1, 2, 5, 10, 15]:
         tp_list = col_list[:j]
-        es.r_pieces(tp_list, read_size=11804900, block=250000)
-    '''
-    '''
-    for x in xrange(3):
-        for i in [10000, 100000, 200000, 300000, 400000, 500000, 600000]:
-            for j in xrange(1, len(col_list) + 1):
-                tp_list = col_list[:j]
-                es.read_write(flist=tp_list, read_size=i)
+        es.r_w_pieces(tp_list, read_size=0, block=i)
+'''
+###################################################################################################################
+###################################################################################################################
 
-                # This block is to test reading and writing time for different scale of pieces
-    for y in xrange():
-        for k in [1000000, 5000000, 10000000, 11804900]:
-            for i in [100000, 500000]:
-                for j in [1, 2, 5, 10, 20, 29]:
-                    tp_list = col_list[:j]
-                    es.r_w_pieces(tp_list, read_size=k, block=i)'''
-    ###################################################################################################################
-    '''
-    # This block to test reading time for different scales of rows and columns.
-    for i in [1, 10, 100, 1000, 10000, 100000, 1000000]:
-        for j in xrange(3, len(col_list) + 1):
+# This block is to test reading and writing time for different scales of rows and columns.
+
+
+
+#############################250000######################################################################################
+# This block is to test reading and writing time for different scale of pieces
+'''
+for j in [1, 10, 29]:
+    tp_list = col_list[:j]
+    es.r_pieces(tp_list, read_size=11804900, block=250000)
+'''
+'''
+for x in xrange(3):
+    for i in [10000, 100000, 200000, 300000, 400000, 500000, 600000]:
+        for j in xrange(1, len(col_list) + 1):
             tp_list = col_list[:j]
-            filterlst = []
-            for k in tp_list:
-                filterlst.append('hits.hits._source.' + k)
-            #print filterlst
-            start = time.clock()
-            es = Elas_test()
-            es.read_test(filterlst, read_size=i)
-            end = time.clock()
-            print "For %d and " % i, " %d columns" % j, '\t\t', "Done! With a time consumption of %0.6f seconds" % (end - start)
-    '''
-    ###################################################################################################################
-    ###################################################################################################################
+            es.read_write(flist=tp_list, read_size=i)
+
+            # This block is to test reading and writing time for different scale of pieces
+for y in xrange():
+    for k in [1000000, 5000000, 10000000, 11804900]:
+        for i in [100000, 500000]:
+            for j in [1, 2, 5, 10, 20, 29]:
+                tp_list = col_list[:j]
+                es.r_w_pieces(tp_list, read_size=k, block=i)
+                '''
+###################################################################################################################
+'''
+# This block to test reading time for different scales of rows and columns.
+for i in [1, 10, 100, 1000, 10000, 100000, 1000000]:
+    for j in xrange(3, len(col_list) + 1):
+        tp_list = col_list[:j]
+        filterlst = []
+        for k in tp_list:
+            filterlst.append('hits.hits._source.' + k)
+        # print filterlst
+        start = time.clock()
+        es = Elas_test()
+        es.read_test(filterlst, read_size=i)
+        end = time.clock()
+        print "For %d and " % i, " %d columns" % j, '\t\t', "Done! With a time consumption of %0.6f seconds" % (
+        end - start)
+'''
+###################################################################################################################
+###################################################################################################################
 # res = es.search(index="nprobe-2017.07.01", body={"query": {"match_all": {}}})
 # res = es.search(index="nprobe-2017.07.01", size=100, filter_path=['hits.hits._id', 'hits.hits._type'])
 
 # res = es.search(index="nprobe-2017.07.01", size=1, filter_path=['hits.hits._source.IN_BYTES'], request_timeout=30)
 
-'''
-# This block is to get the size of each component in the dictionary
+'''  # This block is to get the size of each component in the dictionary
 for i in res['hits']['hits'][0][u'_source']:
     tp = res['hits']['hits'][0][u'_source'][i]
     print i, tp, type(tp), sys.getsizeof(tp)
